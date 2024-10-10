@@ -52,7 +52,7 @@ const main = async () => {
   });
 
   if (usePairingCode && !state.creds.registered) {
-    const phoneNumber = await question(chalk.blue('\nMasukkan Nomor Anda:\n')); 
+    const phoneNumber = await question(chalk.yellow('\nMasukkan Nomor Anda:\n')); 
     const code = await AutoViewStatusSocket.requestPairingCode(phoneNumber.trim());
     console.log(chalk.green(`Kode Pairing Anda: ${code}`));
   }
@@ -80,10 +80,10 @@ const handleConnectionUpdate = (update, AutoViewStatusSocket, saveCreds) => {
   if (connection === 'connecting') {
     spinnies.add('start', { text: 'Menghubungkan...' });
   } else if (connection === 'open') {
-    spinnies.succeed('start', { text: 'Berhasil terhubung!' });
+    spinnies.succeed('start', { text: 'Berhasil Terhubung!' });
   } else if (connection === 'close' && !isFileUpdated) {
     if (lastDisconnect.error.output.statusCode === DisconnectReason.loggedOut) {
-      console.log(chalk.red('Perangkat telah keluar, harap hapus folder session dan hubungkan kembali.'));
+      console.log(chalk.red('Perangkat Telah Keluar, Harap Hapus Folder session Dan Hubungkan Kembali.'));
       process.exit(0);
     } else {
       main().catch(() => main());
