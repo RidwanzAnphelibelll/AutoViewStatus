@@ -1,1 +1,1 @@
-```#  Bot WhatsApp Auto Lihat Status.```
+```# Bot WhatsApp Auto Lihat Status.```
