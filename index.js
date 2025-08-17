@@ -4,11 +4,8 @@ const {
   default: AutoViewStatusConnect,
   useMultiFileAuthState,
   DisconnectReason,
-  getContentType,
   jidDecode,
-  proto,
-  Browsers,
-  generateWAMessageFromContent
+  Browsers
 } = require("@whiskeysockets/baileys");
 const { Boom } = require("@hapi/boom");
 const qrcode = require("qrcode-terminal");
@@ -24,6 +21,7 @@ const store = {
   contacts: {},
   messages: {},
   groupMetadata: {},
+  
   bind: (ev) => {
     ev.on('contacts.update', (update) => {
       for (let contact of update) {
@@ -32,6 +30,7 @@ const store = {
       }
     });
   },
+  
   loadMessage: async (jid, id) => {
     return null;
   }
@@ -141,6 +140,7 @@ async function startAutoViewStatus() {
   });
 
   AutoViewStatusSocket.ev.on("creds.update", saveCreds);
+  
   return AutoViewStatusSocket;
 }
 
