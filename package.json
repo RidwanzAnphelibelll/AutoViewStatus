@@ -7,10 +7,12 @@
   
   "author": "RidwanzSaputra",
   "license": "MIT",
+  
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.8",
+    "@whiskeysockets/baileys": "^6.7.18",
     "moment-timezone": "^0.5.46",
+    "qrcode-terminal": "^0.12.0",
     "spinnies": "^0.5.1",
-    "chalk": "^4.1.2"
+    "chalk": "^2.3.0"
   }
 }

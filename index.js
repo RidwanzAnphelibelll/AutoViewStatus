@@ -4,106 +4,151 @@ const {
   default: AutoViewStatusConnect,
   useMultiFileAuthState,
   DisconnectReason,
-  makeInMemoryStore,
+  getContentType,
   jidDecode,
-  makeWASocket,
+  proto,
+  Browsers,
+  generateWAMessageFromContent
 } = require("@whiskeysockets/baileys");
-const fs = require('fs');
-const pino = require('pino');
-const chalk = require('chalk');
-const readline = require('readline');
+const { Boom } = require("@hapi/boom");
+const qrcode = require("qrcode-terminal");
+const chalk = require("chalk");
+const pino = require("pino");
+const fs = require("fs");
 const spinnies = new (require('spinnies'))();
 const autoViewStatus = require('./lib/autoview');
+
 const usePairingCode = true;
 
-let isFileUpdated = false;
+const store = {
+  contacts: {},
+  messages: {},
+  groupMetadata: {},
+  bind: (ev) => {
+    ev.on('contacts.update', (update) => {
+      for (let contact of update) {
+        let id = contact.id;
+        if (store && store.contacts) store.contacts[id] = { id, name: contact.notify };
+      }
+    });
+  },
+  loadMessage: async (jid, id) => {
+    return null;
+  }
+};
 
-async function question(query) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
+function getPhoneNumberInput() {
+  return new Promise((resolve) => {
+    process.stdout.write(chalk.yellow('\nMasukkan Nomor Anda:\n'));
+    process.stdin.once('data', (data) => {
+      resolve(data.toString().trim());
+    });
   });
-  
-  return new Promise((resolve) =>
-    rl.question(query, (ans) => {
-      rl.close();
-      resolve(ans);
-    })
-  );
 }
 
-const main = async () => {
-  const store = makeInMemoryStore({
-    logger: pino().child({
-      level: 'silent',
-      stream: 'store',
-    }),
-  });
-
+async function startAutoViewStatus() {
   const { state, saveCreds } = await useMultiFileAuthState('session');
-  const AutoViewStatusSocket = makeWASocket({
-    logger: pino({ level: 'silent' }),
-    printQRInTerminal: !usePairingCode,
-    generateHighQualityLinkPreview: true,
+
+  const AutoViewStatusSocket = AutoViewStatusConnect({
+    browser: Browsers.ubuntu('Chrome'),
+    logger: pino({ level: "silent" }),
     markOnlineOnConnect: false,
     syncFullHistory: true,
-    browser: ["Ubuntu", "Chrome", "20.04.6"],
-    auth: state,
+    auth: state
   });
 
-  if (usePairingCode && !state.creds.registered) {
-    const phoneNumber = await question(chalk.yellow('\nMasukkan Nomor Anda:\n')); 
-    const code = await AutoViewStatusSocket.requestPairingCode(phoneNumber.trim());
-    console.log(chalk.green(`Kode Pairing Anda: ${code}`));
+  if (usePairingCode && !AutoViewStatusSocket.authState.creds.registered) {
+    const phoneNumber = await getPhoneNumberInput();
+    if (phoneNumber.includes('628')) {
+      const code = await AutoViewStatusSocket.requestPairingCode(phoneNumber.trim());
+      console.log(chalk.green(`Kode Pairing Anda: ${code}`));
+    } else {
+      console.log(chalk.red(`Nomor Harus Diawali Dengan 628!`));
+      process.exit(0);
+    }
   }
 
-  AutoViewStatusSocket.ev.on('messages.upsert', async (chatUpdate) => {
-    const m = chatUpdate.messages[0];
-    await autoViewStatus(m, AutoViewStatusSocket);
+  AutoViewStatusSocket.ev.on('connection.update', (update) => {
+    const { connection, lastDisconnect, qr } = update;
+    if (qr && !usePairingCode) {
+      console.log(chalk.cyan('Silahkan scan QR Code:'));
+      qrcode.generate(qr, { small: true });
+    }
+    
+    if (connection === 'connecting') {
+      spinnies.add('start', { text: 'Sedang Menghubungkan...' });
+    } else if (connection === 'open') {
+      spinnies.succeed('start', { text: 'Berhasil Terhubung!' });
+    }
+  });
+
+  store.bind(AutoViewStatusSocket.ev);
+
+  AutoViewStatusSocket.ev.on("messages.upsert", async (chatUpdate) => {
+    try {
+      const m = chatUpdate.messages[0];
+      await autoViewStatus(m, AutoViewStatusSocket);
+    } catch (err) {
+      console.log(err);
+    }
   });
 
   AutoViewStatusSocket.decodeJid = (jid) => {
     if (!jid) return jid;
-    return /:\d+@/gi.test(jid)
-      ? (jidDecode(jid) || {}).user + '@' + (jidDecode(jid) || {}).server
-      : jid;
+    if (/:\d+@/gi.test(jid)) {
+      let decode = jidDecode(jid) || {};
+      return (decode.user && decode.server && decode.user + "@" + decode.server) || jid;
+    } else return jid;
   };
 
-  AutoViewStatusSocket.ev.on('connection.update', (update) =>
-    handleConnectionUpdate(update, AutoViewStatusSocket, saveCreds)
-  );
-  AutoViewStatusSocket.ev.on('creds.update', saveCreds);
-};
-
-const handleConnectionUpdate = (update, AutoViewStatusSocket, saveCreds) => {
-  const { connection, lastDisconnect } = update;
-  if (connection === 'connecting') {
-    spinnies.add('start', { text: 'Menghubungkan...' });
-  } else if (connection === 'open') {
-    spinnies.succeed('start', { text: 'Berhasil Terhubung!' });
-  } else if (connection === 'close' && !isFileUpdated) {
-    if (lastDisconnect.error.output.statusCode === DisconnectReason.loggedOut) {
-      console.log(chalk.red('Perangkat Telah Keluar, Harap Hapus Folder session Dan Hubungkan Kembali.'));
-      process.exit(0);
-    } else {
-      main().catch(() => main());
+  AutoViewStatusSocket.ev.on("contacts.update", (update) => {
+    for (let contact of update) {
+      let id = AutoViewStatusSocket.decodeJid(contact.id);
+      if (store && store.contacts) store.contacts[id] = { id, name: contact.notify };
     }
-  }
-};
-
-const start = () => {
-  main().catch((err) => {
-    console.error(err);
-    process.exit(1);
   });
-};
 
-start();
+  AutoViewStatusSocket.ev.on("connection.update", async (update) => {
+    const { connection, lastDisconnect } = update;
+    if (connection === "close") {
+      let reason = new Boom(lastDisconnect?.error)?.output.statusCode;
+      if (reason === DisconnectReason.badSession) {
+        console.log(chalk.red('Sesi Buruk, Harap Hapus Folder session dan Hubungkan Kembali!'));
+        process.exit(0);
+      } else if (reason === DisconnectReason.connectionClosed) {
+        console.log(chalk.yellow('Koneksi Ditutup, Menghubungkan Kembali...'));
+        startAutoViewStatus();
+      } else if (reason === DisconnectReason.connectionLost) {
+        console.log(chalk.yellow('Koneksi Hilang Dari Server, Menghubungkan Kembali...'));
+        startAutoViewStatus();
+      } else if (reason === DisconnectReason.connectionReplaced) {
+        console.log(chalk.red('Koneksi Digantikan, Sesi Baru Dibuka, Harap Restart Bot!'));
+        process.exit(0);
+      } else if (reason === DisconnectReason.loggedOut) {
+        console.log(chalk.red('Perangkat Telah Keluar, Harap Hapus Folder session Dan Hubungkan Kembali.'));
+        process.exit(0);
+      } else if (reason === DisconnectReason.restartRequired) {
+        console.log(chalk.blue('Restart Diperlukan, Melakukan Restart...'));
+        startAutoViewStatus();
+      } else if (reason === DisconnectReason.timedOut) {
+        console.log(chalk.yellow('Koneksi Timeout, Menghubungkan Kembali...'));
+        startAutoViewStatus();
+      } else {
+        console.log(chalk.red(`Alasan Disconnect Tidak Diketahui: ${reason}|${connection}`));
+        startAutoViewStatus();
+      }
+    }
+  });
+
+  AutoViewStatusSocket.ev.on("creds.update", saveCreds);
+  return AutoViewStatusSocket;
+}
+
+startAutoViewStatus();
 
 let file = require.resolve(__filename);
 fs.watchFile(file, () => {
   fs.unwatchFile(file);
-  isFileUpdated = true;
   console.log(chalk.redBright(`Update File: ${__filename}`));
   delete require.cache[file];
   require(file);
